@@ -1,0 +1,607 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>TETRIS - Frost & Blast + AI + Rewind</title>
+    <style>
+        :root {
+            --bg: #0a0a1a;
+            --surface: #151530;
+            --text: #e0e0f0;
+            --text2: #b0b0cc;
+            --freeze: #00d4ff;
+            --bomb: #ff4455;
+            --gold: #ffd740;
+            --rewind: #d0a0ff;
+            --cell-size: 28px;
+            --board-cols: 10;
+            --board-rows: 20;
+            --board-width: calc(var(--cell-size) * var(--board-cols));
+            --board-height: calc(var(--cell-size) * var(--board-rows));
+        }
+        * { margin:0; padding:0; box-sizing:border-box; }
+        body {
+            background: var(--bg);
+            background-image: radial-gradient(ellipse at 20% 15%, rgba(120,80,255,0.14) 0%, transparent 50%),
+                radial-gradient(ellipse at 75% 30%, rgba(0,180,255,0.10) 0%, transparent 50%),
+                radial-gradient(ellipse at 40% 70%, rgba(76,255,143,0.07) 0%, transparent 50%);
+            min-height: 100vh; display: flex; align-items: center; justify-content: center;
+            font-family: 'Segoe UI', 'Inter', system-ui, sans-serif; padding: 16px;
+        }
+        .ambient-particles { position:fixed; top:0; left:0; width:100%; height:100%; pointer-events:none; z-index:0; overflow:hidden; }
+        .ambient-particle { position:absolute; border-radius:50%; animation:floatUp linear infinite; opacity:0; }
+        @keyframes floatUp {
+            0% { transform:translateY(105vh) scale(0); opacity:0; }
+            2% { opacity:0.5; } 40% { opacity:0.3; } 90% { opacity:0.05; }
+            100% { transform:translateY(-10vh) scale(1.8); opacity:0; }
+        }
+        .game-wrapper { position:relative; z-index:1; display:flex; flex-direction:column; gap:18px; align-items:center; }
+        .boards-row { display:flex; gap:18px; align-items:stretch; flex-wrap:wrap; justify-content:center; }
+        .board-col { display:flex; flex-direction:column; align-items:center; gap:8px; }
+        .board-label { font-weight:700; font-size:13px; letter-spacing:2px; text-transform:uppercase; padding:6px 16px; border-radius:20px; }
+        .board-label.player-label { background:rgba(120,80,255,0.2); color:#cbb5ff; border:1px solid rgba(120,80,255,0.35); }
+        .board-label.ai-label { background:rgba(46,204,113,0.2); color:#7dffb3; border:1px solid rgba(46,204,113,0.35); animation:aiLabelPulse 2.5s infinite; }
+        @keyframes aiLabelPulse {
+            0%,100%{ border-color:rgba(46,204,113,0.35); box-shadow:0 0 8px rgba(76,255,143,0.1); }
+            50%{ border-color:rgba(76,255,143,0.6); box-shadow:0 0 18px rgba(76,255,143,0.25); }
+        }
+        .board-container {
+            position:relative; background:var(--surface); border-radius:18px; padding:10px;
+            box-shadow:0 8px 40px rgba(0,0,0,0.5),0 0 0 2px rgba(255,255,255,0.04);
+            border:2px solid rgba(255,255,255,0.08); transition:0.3s;
+        }
+        .board-container.player-board.frozen { border-color:var(--freeze); box-shadow:0 0 30px rgba(0,200,255,0.35); }
+        .board-container.player-board.bomb-mode { border-color:var(--bomb); animation:bombPulse 0.7s infinite; }
+        @keyframes bombPulse {
+            0%,100%{ box-shadow:0 0 30px rgba(255,70,80,0.4); }
+            50%{ box-shadow:0 0 50px rgba(255,70,80,0.65); }
+        }
+        .board-inner { position:relative; background:#0d0d24; border-radius:10px; overflow:hidden; }
+        canvas.board-canvas { display:block; width:var(--board-width); height:var(--board-height); }
+        .freeze-icon { position:absolute; top:50%; left:50%; transform:translate(-50%,-50%) scale(0); font-size:55px; color:var(--freeze); opacity:0; transition:0.3s; }
+        .board-container.player-board.frozen .freeze-icon { transform:translate(-50%,-50%) scale(1); opacity:0.7; animation:freezePulse 1.5s infinite; }
+        @keyframes freezePulse { 0%,100%{ opacity:0.5; transform:translate(-50%,-50%) scale(1); } 50%{ opacity:0.85; transform:translate(-50%,-50%) scale(1.08); } }
+        .game-over-overlay { position:absolute; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.78); border-radius:18px; display:flex; flex-direction:column; align-items:center; justify-content:center; z-index:10; opacity:0; pointer-events:none; transition:0.4s; }
+        .game-over-overlay.active { opacity:1; pointer-events:all; }
+        .game-over-overlay h2 { font-size:32px; font-weight:800; color:#fff; margin-bottom:6px; }
+        .game-over-overlay button { padding:10px 28px; font-size:15px; font-weight:700; border:none; border-radius:30px; cursor:pointer; background:linear-gradient(135deg,#7c4dff,#5c3aff); color:#fff; }
+        .side-panel { display:flex; flex-direction:column; gap:12px; min-width:185px; max-width:210px; }
+        .panel-card { background:var(--surface); border-radius:14px; padding:12px 14px; border:1px solid rgba(255,255,255,0.06); }
+        .panel-card h3 { font-size:10px; text-transform:uppercase; letter-spacing:2px; color:var(--text2); margin-bottom:6px; }
+        .panel-card .stat-value { font-size:24px; font-weight:800; color:#fff; }
+        .comparison-row { display:flex; gap:8px; }
+        .comparison-row .stat-mini { flex:1; text-align:center; padding:6px; border-radius:8px; background:var(--surface2); }
+        .stat-mini.player-stat { border-left:3px solid #7c4dff; }
+        .stat-mini.ai-stat { border-left:3px solid #2ecc71; }
+        .stat-mini .val { font-size:16px; font-weight:700; color:#fff; }
+        .stat-mini .lbl { font-size:9px; color:var(--text2); text-transform:uppercase; }
+        .next-piece-card canvas { background:#0d0d24; border-radius:10px; }
+        .action-btn {
+            width:100%; padding:11px 14px; font-size:14px; font-weight:700; letter-spacing:1.5px;
+            border:none; border-radius:12px; cursor:pointer; color:#fff; transition:0.3s;
+            display:flex; align-items:center; justify-content:center; gap:8px;
+        }
+        .bomb-btn { background:linear-gradient(135deg,#ff4455,#e63040); }
+        .bomb-btn:disabled { opacity:0.4; cursor:not-allowed; }
+        .summon-btn { background:linear-gradient(135deg,#ff9100,#e07b00); }
+        .rewind-btn { background:linear-gradient(135deg,#8e44ad,#6c3483); }
+        .rewind-btn:disabled { opacity:0.4; cursor:not-allowed; }
+        .rewind-btn .rewind-count { background:rgba(0,0,0,0.3); border-radius:20px; padding:3px 9px; font-size:13px; }
+        .freeze-indicator { display:flex; align-items:center; gap:8px; padding:10px 14px; border-radius:12px; background:var(--surface); }
+        .freeze-indicator .indicator-dot { width:12px; height:12px; border-radius:50%; background:#555; }
+        .freeze-indicator.active .indicator-dot { background:var(--freeze); box-shadow:0 0 18px var(--freeze-glow); animation:dotGlow 1s infinite; }
+        @keyframes dotGlow { 0%,100%{ box-shadow:0 0 18px var(--freeze-glow); } 50%{ box-shadow:0 0 30px var(--freeze); } }
+        .controls-info { font-size:10px; color:var(--text2); }
+        .controls-info .key { background:var(--surface2); padding:2px 6px; border-radius:4px; color:#ddd; font-size:9px; }
+    </style>
+</head>
+<body>
+<div class="ambient-particles" id="ambientParticles"></div>
+<div class="game-wrapper">
+    <div class="boards-row">
+        <div class="board-col">
+            <div class="board-label player-label">🎮 YOU</div>
+            <div class="board-container player-board" id="playerBoardContainer">
+                <div class="board-inner"><canvas class="board-canvas" id="playerCanvas"></canvas></div>
+                <div class="freeze-icon">❄️</div>
+                <div class="game-over-overlay" id="playerGameOverOverlay">
+                    <h2>GAME OVER</h2>
+                    <p class="final-score" id="playerFinalScore">Score: 0</p>
+                    <button id="restartBtn">🔄 PLAY AGAIN</button>
+                </div>
+            </div>
+        </div>
+        <div class="side-panel">
+            <div class="panel-card"><h3>🏆 Your Score</h3><div class="stat-value" id="playerScoreDisplay">0</div></div>
+            <div class="panel-card"><h3>📈 Level</h3><div class="stat-value" id="levelDisplay">1</div></div>
+            <div class="panel-card"><h3>📏 Lines</h3><div class="stat-value" id="playerLinesDisplay">0</div></div>
+            <div class="panel-card comparison-row">
+                <div class="stat-mini player-stat"><div class="val" id="playerScoreMini">0</div><div class="lbl">You</div></div>
+                <div class="stat-mini ai-stat"><div class="val" id="aiScoreMini">0</div><div class="lbl">AI</div></div>
+            </div>
+            <div class="panel-card next-piece-card"><h3>🔮 Next</h3><canvas id="nextCanvas" width="100" height="85"></canvas></div>
+            <button class="action-btn bomb-btn" id="bombBtn">💣 BOMB <span class="bomb-count" id="bombCount">3</span></button>
+            <button class="action-btn summon-btn" id="summonToggleBtn">✨ Summon Mode</button>
+            <div class="panel-card" id="summonPalette" style="display:flex; flex-wrap:wrap; gap:6px; justify-content:center;"></div>
+            <button class="action-btn rewind-btn" id="rewindBtn">⏪ REWIND <span class="rewind-count" id="rewindCount">3</span></button>
+            <div class="freeze-indicator" id="freezeIndicator">
+                <div class="indicator-dot"></div><span>FREEZE <span class="key" style="color:var(--freeze)">R</span></span>
+            </div>
+            <div class="panel-card controls-info">
+                <span class="key">← →</span> Move <span class="key">↑</span> Rotate<br>
+                <span class="key">↓</span> Soft Drop <span class="key">Space</span> Hard Drop<br>
+                <span class="key" style="color:var(--freeze)">R</span> Freeze <span class="key" style="color:var(--bomb)">B</span> Bomb<br>
+                <span class="key" style="color:var(--rewind)">Z</span> Rewind
+            </div>
+        </div>
+        <div class="board-col">
+            <div class="board-label ai-label">🤖 AI (synced)</div>
+            <div class="board-container ai-board" id="aiBoardContainer">
+                <div class="board-inner"><canvas class="board-canvas" id="aiCanvas"></canvas></div>
+                <div class="game-over-overlay" id="aiGameOverOverlay"><h2>AI CRASHED</h2><p class="final-score" id="aiFinalScore">Score: 0</p></div>
+            </div>
+        </div>
+    </div>
+</div>
+<script>
+(function() {
+    const playerCanvas = document.getElementById('playerCanvas');
+    const playerCtx = playerCanvas.getContext('2d');
+    const aiCanvas = document.getElementById('aiCanvas');
+    const aiCtx = aiCanvas.getContext('2d');
+    const nextCanvas = document.getElementById('nextCanvas');
+    const nextCtx = nextCanvas.getContext('2d');
+    const playerBoardContainer = document.getElementById('playerBoardContainer');
+    const playerGameOverOverlay = document.getElementById('playerGameOverOverlay');
+    const aiGameOverOverlay = document.getElementById('aiGameOverOverlay');
+    const playerFinalScoreEl = document.getElementById('playerFinalScore');
+    const aiFinalScoreEl = document.getElementById('aiFinalScore');
+    const playerScoreDisplay = document.getElementById('playerScoreDisplay');
+    const playerScoreMini = document.getElementById('playerScoreMini');
+    const aiScoreMini = document.getElementById('aiScoreMini');
+    const levelDisplay = document.getElementById('levelDisplay');
+    const playerLinesDisplay = document.getElementById('playerLinesDisplay');
+    const bombBtn = document.getElementById('bombBtn');
+    const bombCountEl = document.getElementById('bombCount');
+    const freezeIndicator = document.getElementById('freezeIndicator');
+    const restartBtn = document.getElementById('restartBtn');
+    const summonPalette = document.getElementById('summonPalette');
+    const summonToggleBtn = document.getElementById('summonToggleBtn');
+    const rewindBtn = document.getElementById('rewindBtn');
+    const rewindCountEl = document.getElementById('rewindCount');
+    const ambientContainer = document.getElementById('ambientParticles');
+
+    const COLS = 10, ROWS = 20, CELL_SIZE = 28;
+    const BOARD_WIDTH = COLS * CELL_SIZE, BOARD_HEIGHT = ROWS * CELL_SIZE;
+    const BOMB_RADIUS = 1, INITIAL_BOMBS = 3, BOMB_REWARD_LINES = 5;
+    const BASE_DROP_INTERVAL = 800, MIN_DROP_INTERVAL = 80, LEVEL_SPEED_FACTOR = 65;
+    const MAX_HISTORY = 5, INITIAL_REWINDS = 3;
+
+    const PIECE_COLORS = {
+        I: { fill:'#00e5ff', light:'#80f0ff', dark:'#009faf' },
+        O: { fill:'#ffd740', light:'#ffe98a', dark:'#c79c00' },
+        T: { fill:'#b388ff', light:'#d9bfff', dark:'#7c3aed' },
+        S: { fill:'#69f0ae', light:'#b9f6ca', dark:'#2e9d5e' },
+        Z: { fill:'#ff5252', light:'#ff8a80', dark:'#c62828' },
+        J: { fill:'#448aff', light:'#82b1ff', dark:'#1a5dc7' },
+        L: { fill:'#ff9100', light:'#ffb74d', dark:'#c25e00' }
+    };
+    const PIECE_SHAPES = {
+        I: [[0,0,0,0],[1,1,1,1],[0,0,0,0],[0,0,0,0]],
+        O: [[1,1],[1,1]],
+        T: [[0,1,0],[1,1,1],[0,0,0]],
+        S: [[0,1,1],[1,1,0],[0,0,0]],
+        Z: [[1,1,0],[0,1,1],[0,0,0]],
+        J: [[1,0,0],[1,1,1],[0,0,0]],
+        L: [[0,0,1],[1,1,1],[0,0,0]]
+    };
+    const PIECE_NAMES = ['I','O','T','S','Z','J','L'];
+
+    let sharedQueue = [];
+    function ensureQueue() { while(sharedQueue.length<30) sharedQueue.push(PIECE_NAMES[Math.floor(Math.random()*PIECE_NAMES.length)]); }
+    function getFromQueue() { ensureQueue(); return sharedQueue.shift(); }
+
+    let playerBoard, playerCur, playerNextName, playerScore, playerLevel, playerLines, bombCount;
+    let freezeActive=false, bombMode=false, playerGameOver=false;
+    let dropInterval, dropTimer, lastTime=0, particles=[];
+    let summonMode=false, summonPieceName=null;
+    let playerHistory = [], rewindCount = INITIAL_REWINDS;
+    let rewindAnimating = false, rewindAnimTimer = 0, rewindShake = 0;
+
+    let aiBoard, aiCur, aiScore, aiLevel, aiLines, aiGameOver=false;
+
+    function createBoard() { return Array.from({length:ROWS},()=>new Array(COLS).fill(null)); }
+    function createPiece(name) {
+        const shape = PIECE_SHAPES[name].map(r=>[...r]);
+        const w = shape[0].length;
+        return { name, shape, row: name==='I'?-1:0, col:Math.floor((COLS-w)/2), color:PIECE_COLORS[name] };
+    }
+    function isValid(board, shape, row, col) {
+        for(let r=0;r<shape.length;r++) for(let c=0;c<shape[r].length;c++) {
+            if(!shape[r][c]) continue;
+            const br=row+r, bc=col+c;
+            if(bc<0||bc>=COLS||br>=ROWS) return false;
+            if(br<0) continue;
+            if(board[br][bc]!==null) return false;
+        }
+        return true;
+    }
+    function ghostPosition(board, piece) {
+        if(!piece) return null;
+        let row=piece.row;
+        while(isValid(board,piece.shape,row+1,piece.col)) row++;
+        return {row, col:piece.col};
+    }
+    function lockPiece(board, piece) {
+        const {shape,row,col,name}=piece;
+        for(let r=0;r<shape.length;r++) for(let c=0;c<shape[r].length;c++) {
+            if(!shape[r][c]) continue;
+            const br=row+r, bc=col+c;
+            if(br<0||br>=ROWS||bc<0||bc>=COLS) return false;
+            board[br][bc]=name;
+        }
+        return true;
+    }
+    function clearLines(board) {
+        let cleared=0;
+        for(let r=ROWS-1;r>=0;r--) {
+            if(board[r].every(c=>c!==null)) {
+                board.splice(r,1); board.unshift(new Array(COLS).fill(null));
+                cleared++; r++;
+            }
+        }
+        return cleared;
+    }
+    function getAllRotations(shape) {
+        const rots=[]; let cur=shape.map(r=>[...r]); const seen=new Set();
+        for(let i=0;i<4;i++) {
+            const key=JSON.stringify(cur); if(seen.has(key)) break; seen.add(key);
+            rots.push(cur.map(r=>[...r]));
+            const n=cur.length, rot=[];
+            for(let c=0;c<n;c++) { const nr=[]; for(let r=n-1;r>=0;r--) nr.push(cur[r][c]); rot.push(nr); }
+            cur=rot;
+        }
+        return rots;
+    }
+    function getHeights(board) {
+        const h=[]; for(let c=0;c<COLS;c++) { let ht=0; for(let r=0;r<ROWS;r++) if(board[r][c]!==null){ht=ROWS-r;break;} h.push(ht); } return h;
+    }
+    function countHoles(board) {
+        let holes=0; for(let c=0;c<COLS;c++) { let found=false; for(let r=0;r<ROWS;r++) { if(board[r][c]!==null) found=true; else if(found) holes++; } } return holes;
+    }
+    function evaluateBoardDynamic(board, rowsCleared) {
+        const heights=getHeights(board); const agg=heights.reduce((a,b)=>a+b,0); const holes=countHoles(board);
+        let bump=0; for(let i=0;i<heights.length-1;i++) bump+=Math.abs(heights[i]-heights[i+1]);
+        if(agg>130) return -3.5*agg + 2.8*rowsCleared - 2.2*holes - 0.3*bump;
+        return -0.51*agg + 1.5*rowsCleared - 0.9*holes - 0.18*bump;
+    }
+    function findBestPlacement(board, pieceName) {
+        const shapes=getAllRotations(PIECE_SHAPES[pieceName]); let bestScore=-Infinity, bestRot=0, bestCol=0;
+        for(let ri=0;ri<shapes.length;ri++) {
+            const shape=shapes[ri]; const w=shape[0].length;
+            for(let col=-1; col<=COLS-w; col++) {
+                const sim=board.map(r=>[...r]);
+                let row=-shape.length;
+                while(isValid(sim,shape,row+1,col)) row++;
+                if(row< -1 || row+shape.length>ROWS) continue;
+                const piece={shape,row,col,name:pieceName};
+                if(!lockPiece(sim,piece)) continue;
+                const cleared=checkLinesQuick(sim);
+                const score=evaluateBoardDynamic(sim,cleared);
+                if(score>bestScore) { bestScore=score; bestRot=ri; bestCol=col; }
+            }
+        }
+        return {rot:bestRot, col:bestCol};
+    }
+    function checkLinesQuick(board) { let c=0; for(let r=0;r<ROWS;r++) if(board[r].every(x=>x!==null)) c++; return c; }
+
+    // Player spawn / lock
+    function playerSpawn() {
+        if(!playerNextName) playerNextName=getFromQueue();
+        const name=playerNextName; playerNextName=getFromQueue();
+        playerCur=createPiece(name);
+        if(!isValid(playerBoard,playerCur.shape,playerCur.row,playerCur.col)) triggerPlayerGameOver();
+    }
+    function triggerPlayerGameOver() {
+        playerGameOver=true; playerCur=null; freezeActive=false; bombMode=false;
+        playerBoardContainer.classList.remove('frozen','bomb-mode');
+        freezeIndicator.classList.remove('active'); bombBtn.classList.remove('active-bomb');
+        playerFinalScoreEl.textContent='Score: '+playerScore.toLocaleString();
+        playerGameOverOverlay.classList.add('active');
+    }
+    function saveHistory() {
+        if(playerGameOver) return;
+        const snapshot = {
+            board: playerBoard.map(row=>[...row]),
+            score: playerScore, lines: playerLines, level: playerLevel, bombCount,
+            cur: playerCur ? { name:playerCur.name, shape:playerCur.shape.map(r=>[...r]), row:playerCur.row, col:playerCur.col } : null,
+            nextName: playerNextName,
+            queue: [...sharedQueue],
+            freezeActive, bombMode, dropTimer
+        };
+        playerHistory.push(snapshot);
+        if(playerHistory.length > MAX_HISTORY) playerHistory.shift();
+    }
+    function playerLock() {
+        if(!playerCur||playerGameOver) return;
+        saveHistory();
+        const lockedName = playerCur.name;
+        if(!lockPiece(playerBoard,playerCur)) { triggerPlayerGameOver(); return; }
+        playerCur=null;
+        const cleared=clearLines(playerBoard);
+        if(cleared>0) {
+            const pts=[0,100,300,500,800]; playerScore+=(pts[cleared]||cleared*200)*playerLevel;
+            playerLines+=cleared;
+            const newLvl=Math.floor(playerLines/10)+1;
+            if(newLvl>playerLevel) { playerLevel=newLvl; dropInterval=Math.max(MIN_DROP_INTERVAL, BASE_DROP_INTERVAL-(playerLevel-1)*LEVEL_SPEED_FACTOR); }
+            const newBombs=INITIAL_BOMBS+Math.floor(playerLines/BOMB_REWARD_LINES);
+            bombCount=newBombs;
+        }
+        updatePlayerUI();
+        aiAdvance(lockedName);
+        playerSpawn();
+        dropTimer=0;
+    }
+
+    function rewindTime() {
+        if(playerGameOver || rewindAnimating || playerHistory.length===0 || rewindCount<=0) return;
+        rewindCount--;
+        updateRewindUI();
+        const snapshot = playerHistory.pop();
+        // Restore state
+        playerBoard = snapshot.board;
+        playerScore = snapshot.score; playerLines = snapshot.lines; playerLevel = snapshot.level;
+        bombCount = snapshot.bombCount;
+        freezeActive = snapshot.freezeActive; bombMode = snapshot.bombMode;
+        dropTimer = snapshot.dropTimer;
+        if(snapshot.cur) {
+            playerCur = createPiece(snapshot.cur.name);
+            playerCur.shape = snapshot.cur.shape;
+            playerCur.row = snapshot.cur.row;
+            playerCur.col = snapshot.cur.col;
+        } else playerCur = null;
+        playerNextName = snapshot.nextName;
+        sharedQueue = [...snapshot.queue];
+        playerBoardContainer.classList.toggle('frozen', freezeActive);
+        playerBoardContainer.classList.toggle('bomb-mode', bombMode);
+        freezeIndicator.classList.toggle('active', freezeActive);
+        bombBtn.classList.toggle('active-bomb', bombMode);
+        updatePlayerUI();
+        // Start rewind animation
+        rewindAnimating = true; rewindAnimTimer = 0; rewindShake = 8;
+        // Spawn some mysterious particles
+        for(let i=0;i<20;i++) {
+            particles.push({
+                x: Math.random()*BOARD_WIDTH, y: Math.random()*BOARD_HEIGHT,
+                vx: (Math.random()-0.5)*3, vy: -Math.random()*5-2,
+                life: 0.6+Math.random()*0.6, maxLife: 0.6+Math.random()*0.6,
+                size: 2+Math.random()*4, color: '#d0a0ff'
+            });
+        }
+    }
+
+    // AI
+    function aiAdvance(pieceName) {
+        if(aiGameOver) return;
+        if(aiCur) { lockPiece(aiBoard,aiCur); aiCur=null; const cl=clearLines(aiBoard); if(cl>0){ const pts=[0,100,300,500,800]; aiScore+=(pts[cl]||cl*200)*aiLevel; aiLines+=cl; aiLevel=Math.floor(aiLines/10)+1; } }
+        aiCur = createPiece(pieceName);
+        const best = findBestPlacement(aiBoard, pieceName);
+        const shapes = getAllRotations(PIECE_SHAPES[pieceName]);
+        aiCur.shape = shapes[best.rot];
+        aiCur.col = best.col;
+        let row = -aiCur.shape.length;
+        while(isValid(aiBoard,aiCur.shape,row+1,aiCur.col)) row++;
+        if(row<-1 || row+aiCur.shape.length>ROWS) { triggerAIGameOver(); return; }
+        aiCur.row = row;
+        aiScoreMini.textContent = aiScore.toLocaleString();
+    }
+    function triggerAIGameOver() {
+        aiGameOver=true; aiCur=null;
+        aiFinalScoreEl.textContent='Score: '+aiScore.toLocaleString();
+        aiGameOverOverlay.classList.add('active');
+    }
+
+    // Movement
+    function playerMove(dr,dc) {
+        if(!playerCur||playerGameOver) return false;
+        const nr=playerCur.row+dr, nc=playerCur.col+dc;
+        if(isValid(playerBoard,playerCur.shape,nr,nc)) { playerCur.row=nr; playerCur.col=nc; return true; }
+        return false;
+    }
+    function playerRotate() {
+        if(!playerCur||playerGameOver||playerCur.name==='O') return;
+        const n=playerCur.shape.length; const rot=[];
+        for(let c=0;c<n;c++) { const nr=[]; for(let r=n-1;r>=0;r--) nr.push(playerCur.shape[r][c]); rot.push(nr); }
+        if(isValid(playerBoard,rot,playerCur.row,playerCur.col)) { playerCur.shape=rot; return; }
+        const kicks=[[0,-1],[0,1],[0,-2],[0,2],[-1,0],[-1,-1],[-1,1],[-2,0]];
+        for(const[dr,dc] of kicks) if(isValid(playerBoard,rot,playerCur.row+dr,playerCur.col+dc)) { playerCur.shape=rot; playerCur.row+=dr; playerCur.col+=dc; return; }
+    }
+    function hardDrop() { if(!playerCur||playerGameOver) return; const g=ghostPosition(playerBoard,playerCur); if(!g) return; playerScore+=(g.row-playerCur.row)*2; playerCur.row=g.row; playerLock(); }
+    function softDrop() { if(!playerCur||playerGameOver) return; if(playerMove(1,0)) playerScore+=1; else playerLock(); }
+
+    // Bomb / Summon
+    function useBomb(br,bc) {
+        if(!bombMode||playerGameOver||bombCount<=0) return;
+        if(br<0||br>=ROWS||bc<0||bc>=COLS) return;
+        bombCount--; bombMode=false; playerBoardContainer.classList.remove('bomb-mode'); bombBtn.classList.remove('active-bomb');
+        for(let dr=-BOMB_RADIUS;dr<=BOMB_RADIUS;dr++) for(let dc=-BOMB_RADIUS;dc<=BOMB_RADIUS;dc++) {
+            const rr=br+dr, cc=bc+dc;
+            if(rr>=0&&rr<ROWS&&cc>=0&&cc<COLS) playerBoard[rr][cc]=null;
+        }
+        updatePlayerUI();
+    }
+    function activateBomb() {
+        if(playerGameOver||bombCount<=0) return;
+        bombMode=!bombMode; playerBoardContainer.classList.toggle('bomb-mode', bombMode); bombBtn.classList.toggle('active-bomb', bombMode);
+        if(bombMode) { summonMode=false; updateSummonUI(); }
+    }
+    function placeSummonBlock(row, col) {
+        if(!summonMode||!summonPieceName||playerGameOver) return;
+        const shape = PIECE_SHAPES[summonPieceName];
+        if(!isValid(playerBoard, shape, row, col)) return;
+        for(let r=0;r<shape.length;r++) for(let c=0;c<shape[r].length;c++) if(shape[r][c]) playerBoard[row+r][col+c]=summonPieceName;
+        updatePlayerUI();
+    }
+    function buildSummonPalette() {
+        summonPalette.innerHTML = '';
+        PIECE_NAMES.forEach(name => {
+            const div = document.createElement('div'); div.className='summon-piece'; div.style.cursor='pointer'; div.style.padding='4px';
+            const c=document.createElement('canvas'); c.width=40; c.height=40;
+            const ctx=c.getContext('2d'); const shape=PIECE_SHAPES[name]; const col=PIECE_COLORS[name];
+            const cs=10; const ox=(40-shape[0].length*cs)/2, oy=(40-shape.length*cs)/2;
+            for(let r=0;r<shape.length;r++) for(let cc=0;cc<shape[r].length;cc++) if(shape[r][cc]) { ctx.fillStyle=col.fill; ctx.fillRect(ox+cc*cs+1,oy+r*cs+1,cs-2,cs-2); }
+            div.appendChild(c);
+            div.addEventListener('click', (e)=>{ e.stopPropagation(); summonPieceName=name; summonMode=true; bombMode=false; playerBoardContainer.classList.remove('bomb-mode'); updateSummonUI(); });
+            summonPalette.appendChild(div);
+        });
+    }
+    function updateSummonUI() { summonToggleBtn.textContent = summonMode ? '✨ Summon: '+summonPieceName : '✨ Summon Mode'; }
+
+    function updatePlayerUI() {
+        playerScoreDisplay.textContent=playerScore.toLocaleString(); playerScoreMini.textContent=playerScore.toLocaleString();
+        levelDisplay.textContent=playerLevel; playerLinesDisplay.textContent=playerLines;
+        bombCountEl.textContent=bombCount; bombBtn.disabled=bombCount<=0||playerGameOver;
+        updateRewindUI();
+    }
+    function updateRewindUI() { rewindCountEl.textContent = rewindCount; rewindBtn.disabled = rewindCount<=0 || playerGameOver || playerHistory.length===0; }
+
+    // Drawing
+    function drawBlock(ctx,x,y,sz,col,alpha=1) {
+        ctx.save(); ctx.globalAlpha=alpha;
+        const grad=ctx.createLinearGradient(x,y,x+sz,y+sz); grad.addColorStop(0,col.light); grad.addColorStop(0.45,col.fill); grad.addColorStop(1,col.dark);
+        ctx.fillStyle=grad; ctx.beginPath(); if(ctx.roundRect) ctx.roundRect(x+1.5,y+1.5,sz-3,sz-3,4); else ctx.rect(x+1.5,y+1.5,sz-3,sz-3); ctx.fill();
+        ctx.fillStyle='rgba(255,255,255,0.2)'; ctx.beginPath(); if(ctx.roundRect) ctx.roundRect(x+1.5,y+1.5,sz-3,(sz-3)*0.35,[4,4,0,0]); else ctx.rect(x+1.5,y+1.5,sz-3,(sz-3)*0.35); ctx.fill();
+        ctx.restore();
+    }
+    function drawBoard(ctx, board, curPiece, isPlayer) {
+        ctx.clearRect(0,0,BOARD_WIDTH,BOARD_HEIGHT);
+        ctx.fillStyle='#0d0d24'; ctx.fillRect(0,0,BOARD_WIDTH,BOARD_HEIGHT);
+        if(isPlayer && rewindAnimating) {
+            // Mysterious rewind overlay
+            const progress = Math.min(rewindAnimTimer / 0.4, 1);
+            ctx.save();
+            if(rewindShake>0) { const dx=(Math.random()-0.5)*rewindShake*2, dy=(Math.random()-0.5)*rewindShake*2; ctx.translate(dx,dy); }
+            // Radial gradient from center
+            const grad = ctx.createRadialGradient(BOARD_WIDTH/2, BOARD_HEIGHT/2, 0, BOARD_WIDTH/2, BOARD_HEIGHT/2, Math.max(BOARD_WIDTH,BOARD_HEIGHT));
+            grad.addColorStop(0, `rgba(180, 120, 255, ${0.5*(1-progress)})`);
+            grad.addColorStop(1, `rgba(0,0,0,${0.3*(1-progress)})`);
+            ctx.fillStyle = grad; ctx.fillRect(0,0,BOARD_WIDTH,BOARD_HEIGHT);
+            ctx.restore();
+        }
+        for(let r=0;r<ROWS;r++) for(let c=0;c<COLS;c++) if(board[r][c]) drawBlock(ctx,c*CELL_SIZE,r*CELL_SIZE,CELL_SIZE,PIECE_COLORS[board[r][c]]);
+        if(isPlayer && curPiece) {
+            const g=ghostPosition(board,curPiece);
+            if(g && (g.row!==curPiece.row||g.col!==curPiece.col)) {
+                const {shape,color}=curPiece;
+                for(let r=0;r<shape.length;r++) for(let c=0;c<shape[r].length;c++) {
+                    if(!shape[r][c]) continue; const br=g.row+r, bc=g.col+c; if(br<0||br>=ROWS||bc<0||bc>=COLS) continue;
+                    ctx.save(); ctx.globalAlpha=0.3; ctx.strokeStyle=color.fill; ctx.lineWidth=2; ctx.setLineDash([4,3]);
+                    ctx.strokeRect(bc*CELL_SIZE+2,br*CELL_SIZE+2,CELL_SIZE-4,CELL_SIZE-4); ctx.restore();
+                }
+            }
+        }
+        if(curPiece) {
+            const {shape,row,col,color}=curPiece;
+            for(let r=0;r<shape.length;r++) for(let c=0;c<shape[r].length;c++) {
+                if(!shape[r][c]) continue; const br=row+r, bc=col+c; if(br<0) continue;
+                drawBlock(ctx,bc*CELL_SIZE,br*CELL_SIZE,CELL_SIZE,color);
+            }
+        }
+        if(isPlayer) {
+            for(const p of particles) {
+                const alpha=Math.max(0,p.life/p.maxLife);
+                ctx.save(); ctx.globalAlpha=alpha; ctx.fillStyle=p.color; ctx.shadowColor=p.color; ctx.shadowBlur=p.size*2;
+                ctx.beginPath(); ctx.arc(p.x,p.y,p.size*alpha,0,Math.PI*2); ctx.fill(); ctx.restore();
+            }
+        }
+    }
+    function drawNext() {
+        nextCtx.clearRect(0,0,100,85); nextCtx.fillStyle='#0d0d24'; nextCtx.fillRect(0,0,100,85);
+        const name=playerNextName||sharedQueue[0]; if(!name) return;
+        const shape=PIECE_SHAPES[name], col=PIECE_COLORS[name], cs=18;
+        const ox=(100-shape[0].length*cs)/2, oy=(85-shape.length*cs)/2;
+        for(let r=0;r<shape.length;r++) for(let c=0;c<shape[r].length;c++) if(shape[r][c]) drawBlock(nextCtx,ox+c*cs,oy+r*cs,cs,col);
+    }
+
+    function resetGame() {
+        sharedQueue=[]; ensureQueue();
+        playerBoard=createBoard(); playerScore=0; playerLevel=1; playerLines=0; bombCount=INITIAL_BOMBS;
+        freezeActive=false; bombMode=false; playerGameOver=false; dropInterval=BASE_DROP_INTERVAL; dropTimer=0;
+        particles=[]; playerHistory=[]; rewindCount=INITIAL_REWINDS; rewindAnimating=false;
+        playerNextName=getFromQueue(); playerCur=null; playerBoardContainer.classList.remove('frozen','bomb-mode');
+        playerGameOverOverlay.classList.remove('active'); updatePlayerUI(); playerSpawn();
+        aiBoard=createBoard(); aiScore=0; aiLevel=1; aiLines=0; aiGameOver=false; aiCur=null; aiGameOverOverlay.classList.remove('active');
+        aiAdvance(playerCur.name);
+        summonMode=false; summonPieceName=null; updateSummonUI();
+        updateRewindUI();
+    }
+
+    function loop(ts) {
+        if(!playerGameOver) {
+            let dt=(ts-lastTime)/1000; if(dt<=0) dt=0.016; if(dt>0.2) dt=0.2; lastTime=ts;
+            updateParticles(dt);
+            if(rewindAnimating) {
+                rewindAnimTimer += dt;
+                rewindShake *= 0.9;
+                if(rewindAnimTimer > 0.5) { rewindAnimating=false; rewindShake=0; }
+            }
+            if(!freezeActive && playerCur && !rewindAnimating) {
+                dropTimer += dt*1000;
+                if(dropTimer >= dropInterval) { dropTimer=0; if(!playerMove(1,0)) playerLock(); }
+            }
+        } else lastTime=ts;
+        drawBoard(playerCtx, playerBoard, playerCur, true);
+        drawBoard(aiCtx, aiBoard, aiCur, false);
+        drawNext();
+        requestAnimationFrame(loop);
+    }
+    function updateParticles(dt) {
+        for(let i=particles.length-1;i>=0;i--) {
+            const p=particles[i]; p.x+=p.vx*dt*60; p.y+=p.vy*dt*60; p.life-=dt;
+            if(p.life<=0) particles.splice(i,1);
+        }
+    }
+
+    // Input
+    document.addEventListener('keydown', (e) => {
+        if(playerGameOver) { if(e.key==='r'||e.key==='R'||e.key==='Enter') resetGame(); return; }
+        if(e.key==='z'||e.key==='Z') { e.preventDefault(); rewindTime(); return; }
+        switch(e.key) {
+            case 'ArrowLeft': e.preventDefault(); playerMove(0,-1); if(!freezeActive) dropTimer=Math.min(dropTimer,dropInterval*0.7); break;
+            case 'ArrowRight': e.preventDefault(); playerMove(0,1); if(!freezeActive) dropTimer=Math.min(dropTimer,dropInterval*0.7); break;
+            case 'ArrowDown': e.preventDefault(); softDrop(); break;
+            case 'ArrowUp': e.preventDefault(); playerRotate(); break;
+            case ' ': e.preventDefault(); hardDrop(); break;
+            case 'r': case 'R': e.preventDefault(); freezeActive=!freezeActive; playerBoardContainer.classList.toggle('frozen',freezeActive); freezeIndicator.classList.toggle('active',freezeActive); if(!freezeActive) dropTimer=0; break;
+            case 'b': case 'B': e.preventDefault(); activateBomb(); break;
+        }
+    });
+    playerCanvas.addEventListener('click', (e) => {
+        if(playerGameOver) return;
+        const rect=playerCanvas.getBoundingClientRect();
+        const mx=(e.clientX-rect.left)*(BOARD_WIDTH/rect.width), my=(e.clientY-rect.top)*(BOARD_HEIGHT/rect.height);
+        const col=Math.floor(mx/CELL_SIZE), row=Math.floor(my/CELL_SIZE);
+        if(bombMode) useBomb(row,col);
+        else if(summonMode) placeSummonBlock(row,col);
+    });
+    bombBtn.addEventListener('click', (e)=>{ e.preventDefault(); if(!playerGameOver) activateBomb(); });
+    summonToggleBtn.addEventListener('click', (e)=>{ e.preventDefault(); summonMode=!summonMode; if(summonMode) { bombMode=false; playerBoardContainer.classList.remove('bomb-mode'); } updateSummonUI(); });
+    rewindBtn.addEventListener('click', (e)=>{ e.preventDefault(); rewindTime(); });
+    restartBtn.addEventListener('click', resetGame);
+
+    if(!CanvasRenderingContext2D.prototype.roundRect) { CanvasRenderingContext2D.prototype.roundRect=function(x,y,w,h,r){ if(typeof r==='number') r=[r,r,r,r]; this.beginPath(); this.moveTo(x+r[0],y); this.lineTo(x+w-r[1],y); this.arcTo(x+w,y,x+w,y+r[1],r[1]); this.lineTo(x+w,y+h-r[2]); this.arcTo(x+w,y+h,x+w-r[2],y+h,r[2]); this.lineTo(x+r[3],y+h); this.arcTo(x,y+h,x,y+h-r[3],r[3]); this.lineTo(x,y+r[0]); this.arcTo(x,y,x+r[0],y,r[0]); this.closePath(); }; }
+
+    function setupCanvases() {
+        const dpr=Math.min(devicePixelRatio||1,2);
+        [playerCanvas,aiCanvas].forEach(c=>{ c.width=BOARD_WIDTH*dpr; c.height=BOARD_HEIGHT*dpr; c.style.width=BOARD_WIDTH+'px'; c.style.height=BOARD_HEIGHT+'px'; });
+        playerCtx.setTransform(1,0,0,1,0,0); playerCtx.scale(dpr,dpr);
+        aiCtx.setTransform(1,0,0,1,0,0); aiCtx.scale(dpr,dpr);
+    }
+    function createAmbient() { for(let i=0;i<35;i++){ const d=document.createElement('div'); d.className='ambient-particle'; const s=2+Math.random()*5; d.style.width=s+'px'; d.style.height=s+'px'; d.style.left=Math.random()*100+'%'; d.style.background=['#7c4dff','#00d4ff','#ff5252','#ffd740','#69f0ae'][Math.floor(Math.random()*5)]; d.style.animationDuration=8+Math.random()*20+'s'; ambientContainer.appendChild(d); } }
+    buildSummonPalette();
+    setupCanvases(); createAmbient(); resetGame(); lastTime=performance.now(); requestAnimationFrame(loop);
+})();
+</script>
+</body>
+</html>
